@@ -1,10 +1,5 @@
-from pathlib import Path
-
-# Re-create the app.py with file name-agnostic uploader text
-app_code = """
 import streamlit as st
 import pandas as pd
-import os
 import tempfile
 import re
 from datetime import datetime
@@ -12,9 +7,8 @@ from pathlib import Path
 
 st.set_page_config(page_title="Shopify Promo Builder", layout="wide")
 st.title("📦 Shopify Promotions Builder (Matrixify Compatible)")
-st.markdown("Upload any Excel file containing your supplier promo data and download 3 ready-to-import Matrixify files.")
+st.markdown("Upload any Excel file containing your supplier promo data and download 3 ready‐to‐import Matrixify files.")
 
-# Accept any Excel file name
 uploaded_file = st.file_uploader("Choose a promo Excel file (.xlsx)", type=["xlsx"])
 
 def parse_promo_dates(text: str):
@@ -32,130 +26,128 @@ def determine_values(raw: str):
     if "443" in text or "Buy 3 Get 1" in text:
         return "443", 0, 0, "Buy 3 Get 1 Free", text
     if "Gift Card" in text or "Fuel Card" in text:
-        m = re.search(r"(\\d+)", text)
-        display = f"${{m.group(1)}} eGift Card" if m else text
+        m = re.search(r"(\d+)", text)
+        display = f"${m.group(1)} eGift Card" if m else text
         return "Gift Card", 0, 0, display, text
     if "%" in text:
-        m = re.search(r"(\\d+)%", text)
+        m = re.search(r"(\d+)%", text)
         pct = int(m.group(1)) if m else 0
         display = text if "max" in text.lower() else f"{pct}% Off"
         return "Percentage", 0, pct, display, text
-    m = re.search(r"(\\d+)", text)
+    m = re.search(r"(\d+)", text)
     if m:
         amt = int(m.group(1))
-        display = f"${{amt}} Cash Back"
+        display = f"${amt} Cash Back"
         return "Cash Back", amt, 0, display, text
     return "Unknown", 0, 0, text, text
 
 if uploaded_file:
     with tempfile.TemporaryDirectory() as tmpdir:
-        base_name = datetime.now().strftime("Shopify_Promo_%Y%m%d_%H%M%S")
-        output_dir = Path(tmpdir) / base_name
-        output_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = Path(tmpdir) / f"Shopify_Promo_{ts}"
+        out.mkdir()
 
+        # 1⃣ Marketplace File
+        rows, source_summary = [], []
         xls = pd.ExcelFile(uploaded_file)
-
-        # Build Marketplace File
-        rows = []
-        source_summary = []
         for idx, sheet in enumerate(xls.sheet_names):
             df = xls.parse(sheet)
-            if {"BJC Code","Consumer Promo","Promotion Period"}.issubset(df.columns):
-                df = df.dropna(subset=["BJC Code"])
-                if not df.empty:
-                    count = len(df)
-                    start, end = parse_promo_dates(df["Promotion Period"].iloc[0])
-                    source_summary.append({"Promo Name": sheet, "Source Count": count, "Source Start": start, "Source End": end})
-                    slug = 2000 + idx
-                    for _, rec in df.iterrows():
-                        promo_type, dol, pct, display_txt, raw_txt = determine_values(rec["Consumer Promo"])
-                        rows.append({
-                            "Status": 1, "id": "", "Bob Jane Material": rec["BJC Code"],
-                            "Promo Name": sheet, "Promo $ Value": dol, "Promo % Value": pct,
-                            "Valid From": start, "Valid To": end, "Slug": slug, "Unit": 0,
-                            "Type": promo_type, "Price Match Skip": 1, "Promo Retail Skip": 1,
-                            "Notify Vendor": 0, "Comments": "", "Ad ID": "",
-                            "_display_text": display_txt, "_raw_text": raw_txt
-                        })
+            cols = {"BJC Code", "Consumer Promo", "Promotion Period"}
+            if not cols.issubset(df.columns):
+                continue
+            df = df.dropna(subset=["BJC Code"])
+            if df.empty:
+                continue
+            count = len(df)
+            start, end = parse_promo_dates(df["Promotion Period"].iloc[0])
+            source_summary.append({
+                "Promo Name": sheet,
+                "Source Count": count,
+                "Source Start": start,
+                "Source End": end
+            })
+            slug = 2000 + idx
+            for _, rec in df.iterrows():
+                promo_type, dol, pct, display_txt, raw_txt = determine_values(rec["Consumer Promo"])
+                rows.append({
+                    "Status": 1, "id": "", "Bob Jane Material": rec["BJC Code"],
+                    "Promo Name": sheet, "Promo $ Value": dol, "Promo % Value": pct,
+                    "Valid From": start, "Valid To": end, "Slug": slug, "Unit": 0,
+                    "Type": promo_type, "Price Match Skip": 1, "Promo Retail Skip": 1,
+                    "Notify Vendor": 0, "Comments": "", "Ad ID": "",
+                    "_display_text": display_txt, "_raw_text": raw_txt
+                })
+
         df_a = pd.DataFrame(rows)
         df_dest = df_a.groupby("Promo Name", as_index=False).agg(
             Dest_Count=("Bob Jane Material", "size"),
             Dest_Start=("Valid From", "first"),
             Dest_End=("Valid To", "first")
         )
-        df_summary = pd.merge(pd.DataFrame(source_summary), df_dest, on="Promo Name", how="left")
+        df_summary = pd.merge(
+            pd.DataFrame(source_summary),
+            df_dest, on="Promo Name", how="left"
+        )
         df_summary["Check"] = [
             f'=IF(AND(B{r+2}=E{r+2},C{r+2}=F{r+2},D{r+2}=G{r+2}),"OK","Mismatch")'
             for r in range(len(df_summary))
         ]
 
-        marketplace_file = output_dir / "Marketplace_File.xlsx"
-        with pd.ExcelWriter(marketplace_file, engine="openpyxl") as w:
-            df_summary.to_excel(w, sheet_name="Summary", index=False)
-            df_a.drop(columns=["_display_text", "_raw_text"]).to_excel(w, sheet_name="Marketplace_Data", index=False)
+        marketplace_path = out / "Marketplace_File.xlsx"
+        with pd.ExcelWriter(marketplace_path, engine="openpyxl") as writer:
+            df_summary.to_excel(writer, sheet_name="Summary", index=False)
+            df_a.drop(columns=["_display_text","_raw_text"]).to_excel(
+                writer, sheet_name="Marketplace_Data", index=False
+            )
 
-        # Build Promo and Cleanup Files
-        promo_rows = []
-        cleanup_rows = []
+        # 2⃣ Promo & 3⃣ Cleanup Files
+        promo_rows, cleanup_rows = [], []
         for _, rec in df_a.iterrows():
-            sku = rec["Bob Jane Material"]
-            promo_type = rec["Type"]
             display_txt = rec["_display_text"]
             raw_txt = rec["_raw_text"]
+            promo_type = rec["Type"]
 
-            bool_443 = "TRUE" if rec["Type"] == "443" else ""
+            bool_443 = "TRUE" if promo_type == "443" else ""
             promo_details = ""
-            if rec["Type"] == "Cash Back":
+            if promo_type == "Cash Back":
                 m = re.search(r"\\$(\\d+)", display_txt)
                 amt = m.group(1) if m else ""
-                promo_details = f"${{amt}}_${{amt}} Cash Back"
-            elif rec["Type"] == "Percentage":
-                raw_ns = raw_txt.replace(" ", "")
-                promo_details = f"{raw_ns}_{display_txt}"
+                promo_details = f"${amt}_${amt} Cash Back"
+            elif promo_type == "Percentage":
+                promo_details = f"{raw_txt.replace(' ','')}_{display_txt}"
 
-            filter_promo = ""
+            # filter.promotion
             if re.search(r"\\d+% Off", display_txt):
-                filter_promo = "Percentage"
+                filter_val = "Percentage"
             elif "Cash Back" in display_txt:
-                filter_promo = "Cash Back"
+                filter_val = "Cash Back"
             elif "Buy 3 Get 1 Free" in display_txt:
-                filter_promo = "Buy 3 Get 1 Free"
+                filter_val = "Buy 3 Get 1 Free"
             elif "Gift Card" in display_txt:
-                filter_promo = "Gift Card"
+                filter_val = "Gift Card"
+            else:
+                filter_val = ""
 
-            promo_rows.append({
-                "Variant SKU": sku,
+            entry = {
+                "Variant SKU": rec["Bob Jane Material"],
                 "Command": "MERGE",
                 "Variant Metafield: display.promotion_secondary_text [single_line_text_field]": display_txt,
                 "Variant Metafield: discounts.buy3get1 [boolean]": bool_443,
                 "Variant Metafield: discount_promo.promo_details [single_line_text_field]": promo_details,
-                "Variant Metafield: filter.promotion [single_line_text_field]": filter_promo
-            })
-            cleanup_rows.append({
-                "Variant SKU": sku,
-                "Command": "MERGE",
-                "Variant Metafield: display.promotion_secondary_text [single_line_text_field]": "",
-                "Variant Metafield: discounts.buy3get1 [boolean]": "",
-                "Variant Metafield: discount_promo.promo_details [single_line_text_field]": "",
-                "Variant Metafield: filter.promotion [single_line_text_field]": ""
-            })
+                "Variant Metafield: filter.promotion [single_line_text_field]": filter_val
+            }
+            promo_rows.append(entry)
+            cleanup_rows.append({k: (v if k in ["Variant SKU","Command"] else "") for k,v in entry.items()})
 
-        df_full = pd.DataFrame(promo_rows)
+        df_promo = pd.DataFrame(promo_rows)
         df_cleanup = pd.DataFrame(cleanup_rows)
 
-        promo_file = output_dir / "Shopify x Matrixify file.xlsx"
-        cleanup_file = output_dir / "Shopify x Matrixify Blank Cleanup File.xlsx"
-        df_full.to_excel(promo_file, index=False)
-        df_cleanup.to_excel(cleanup_file, index=False)
+        promo_path   = out / "Shopify x Matrixify file.xlsx"
+        cleanup_path = out / "Shopify x Matrixify Blank Cleanup File.xlsx"
+        df_promo.to_excel(promo_path, index=False)
+        df_cleanup.to_excel(cleanup_path, index=False)
 
         st.success("✅ Files generated successfully. Download below:")
-        st.download_button("⬇️ Download Marketplace File", data=open(marketplace_file, "rb"), file_name=marketplace_file.name)
-        st.download_button("⬇️ Download Promo File", data=open(promo_file, "rb"), file_name=promo_file.name)
-        st.download_button("⬇️ Download Cleanup File", data=open(cleanup_file, "rb"), file_name=cleanup_file.name)
-"""
-
-# Write to file
-path = Path("/mnt/data/app.py")
-path.write_text(app_code.strip())
-
-print(f"Created updated app.py at {path}")
+        st.download_button("⬇️ Download Marketplace File", data=open(marketplace_path,"rb"), file_name=marketplace_path.name)
+        st.download_button("⬇️ Download Promo File",       data=open(promo_path,"rb"),      file_name=promo_path.name)
+        st.download_button("⬇️ Download Cleanup File",     data=open(cleanup_path,"rb"),    file_name=cleanup_path.name)

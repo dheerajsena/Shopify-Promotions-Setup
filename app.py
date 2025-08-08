@@ -4,6 +4,7 @@ import os
 import tempfile
 import shutil
 from datetime import datetime
+from pathlib import Path
 import re
 
 st.set_page_config(page_title="Shopify Promo Builder", layout="wide")

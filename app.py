@@ -1,17 +1,21 @@
+from pathlib import Path
+
+# Re-create the app.py with file name-agnostic uploader text
+app_code = """
 import streamlit as st
 import pandas as pd
 import os
 import tempfile
-import shutil
 import re
 from datetime import datetime
 from pathlib import Path
 
 st.set_page_config(page_title="Shopify Promo Builder", layout="wide")
 st.title("📦 Shopify Promotions Builder (Matrixify Compatible)")
-st.markdown("Upload your **Supplier Promo File (.xlsx)** and download 3 ready-to-import Matrixify files.")
+st.markdown("Upload any Excel file containing your supplier promo data and download 3 ready-to-import Matrixify files.")
 
-uploaded_file = st.file_uploader("Upload Supplier Promo Excel file", type=["xlsx"])
+# Accept any Excel file name
+uploaded_file = st.file_uploader("Choose a promo Excel file (.xlsx)", type=["xlsx"])
 
 def parse_promo_dates(text: str):
     try:
@@ -28,15 +32,15 @@ def determine_values(raw: str):
     if "443" in text or "Buy 3 Get 1" in text:
         return "443", 0, 0, "Buy 3 Get 1 Free", text
     if "Gift Card" in text or "Fuel Card" in text:
-        m = re.search(r"(\d+)", text)
+        m = re.search(r"(\\d+)", text)
         display = f"${{m.group(1)}} eGift Card" if m else text
         return "Gift Card", 0, 0, display, text
     if "%" in text:
-        m = re.search(r"(\d+)%", text)
+        m = re.search(r"(\\d+)%", text)
         pct = int(m.group(1)) if m else 0
         display = text if "max" in text.lower() else f"{pct}% Off"
         return "Percentage", 0, pct, display, text
-    m = re.search(r"(\d+)", text)
+    m = re.search(r"(\\d+)", text)
     if m:
         amt = int(m.group(1))
         display = f"${{amt}} Cash Back"
@@ -99,18 +103,18 @@ if uploaded_file:
             display_txt = rec["_display_text"]
             raw_txt = rec["_raw_text"]
 
-            bool_443 = "TRUE" if promo_type == "443" else ""
+            bool_443 = "TRUE" if rec["Type"] == "443" else ""
             promo_details = ""
-            if promo_type == "Cash Back":
-                m = re.search(r"\$(\d+)", display_txt)
+            if rec["Type"] == "Cash Back":
+                m = re.search(r"\\$(\\d+)", display_txt)
                 amt = m.group(1) if m else ""
                 promo_details = f"${{amt}}_${{amt}} Cash Back"
-            elif promo_type == "Percentage":
+            elif rec["Type"] == "Percentage":
                 raw_ns = raw_txt.replace(" ", "")
                 promo_details = f"{raw_ns}_{display_txt}"
 
             filter_promo = ""
-            if re.search(r"\d+% Off", display_txt):
+            if re.search(r"\\d+% Off", display_txt):
                 filter_promo = "Percentage"
             elif "Cash Back" in display_txt:
                 filter_promo = "Cash Back"
@@ -145,9 +149,13 @@ if uploaded_file:
         df_cleanup.to_excel(cleanup_file, index=False)
 
         st.success("✅ Files generated successfully. Download below:")
-        with open(marketplace_file, "rb") as f:
-            st.download_button("⬇️ Download Marketplace File", data=f, file_name=marketplace_file.name)
-        with open(promo_file, "rb") as f:
-            st.download_button("⬇️ Download Promo File", data=f, file_name=promo_file.name)
-        with open(cleanup_file, "rb") as f:
-            st.download_button("⬇️ Download Cleanup File", data=f, file_name=cleanup_file.name)
+        st.download_button("⬇️ Download Marketplace File", data=open(marketplace_file, "rb"), file_name=marketplace_file.name)
+        st.download_button("⬇️ Download Promo File", data=open(promo_file, "rb"), file_name=promo_file.name)
+        st.download_button("⬇️ Download Cleanup File", data=open(cleanup_file, "rb"), file_name=cleanup_file.name)
+"""
+
+# Write to file
+path = Path("/mnt/data/app.py")
+path.write_text(app_code.strip())
+
+print(f"Created updated app.py at {path}")

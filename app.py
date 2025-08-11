@@ -7,7 +7,7 @@ from pathlib import Path
 
 st.set_page_config(page_title="Shopify Promo Builder", layout="wide")
 st.title("📦 Shopify Promotions Builder (Matrixify Compatible)")
-st.markdown("Upload any Excel file containing your supplier promo data and download 3 ready‐to‐import Matrixify files.")
+st.markdown("Upload any Excel file containing your supplier promo data and download 3 ready-to-import Matrixify files.")
 
 uploaded_file = st.file_uploader("Choose a promo Excel file (.xlsx)", type=["xlsx"])
 
@@ -110,14 +110,15 @@ if uploaded_file:
             bool_443 = "TRUE" if promo_type == "443" else ""
             promo_details = ""
             if promo_type == "Cash Back":
-                m = re.search(r"\\$(\\d+)", display_txt)
+                # ✅ FIX: correct amount extraction
+                m = re.search(r"\$(\d+)", display_txt)
                 amt = m.group(1) if m else ""
                 promo_details = f"${amt}_${amt} Cash Back"
             elif promo_type == "Percentage":
                 promo_details = f"{raw_txt.replace(' ','')}_{display_txt}"
 
-            # filter.promotion
-            if re.search(r"\\d+% Off", display_txt):
+            # ✅ FIX: robust Percentage detection
+            if re.search(r"\d+%\s*Off", display_txt, flags=re.IGNORECASE):
                 filter_val = "Percentage"
             elif "Cash Back" in display_txt:
                 filter_val = "Cash Back"

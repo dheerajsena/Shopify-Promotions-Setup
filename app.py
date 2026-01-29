@@ -5,11 +5,14 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+# ----------------------------
+# Page setup
+# ----------------------------
 st.set_page_config(page_title="Shopify Promo Builder", layout="wide")
 st.title("📦 Shopify Promotions Builder (Matrixify Compatible)")
 st.markdown(
-    "Upload an Excel file containing your supplier promo data and download **3 ready-to-import** files:\n"
-    "- **Marketplace_File.xlsx** (with Summary)\n"
+    "Upload an Excel file containing supplier promo data and download **3 ready-to-import** files:\n"
+    "- **Marketplace_File.xlsx** (Summary + Marketplace_Data)\n"
     "- **Shopify x Matrixify file.xlsx**\n"
     "- **Shopify x Matrixify Blank Cleanup File.xlsx**"
 )
@@ -17,11 +20,14 @@ st.markdown(
 uploaded_file = st.file_uploader("Choose a promo Excel file (.xlsx)", type=["xlsx"])
 
 
-def parse_promo_dates(text: str):
+# ----------------------------
+# Helpers
+# ----------------------------
+def parse_promo_dates(text):
     """
-    Expects formats like:
-    - "From 01/01/2026 - 31/01/2026"
-    - "01/01/2026 - 31/01/2026"
+    Accepts formats like:
+      - "From 01/01/2026 - 31/01/2026"
+      - "01/01/2026 - 31/01/2026"
     Returns (start_date, end_date) as date objects or (None, None)
     """
     try:
@@ -34,14 +40,14 @@ def parse_promo_dates(text: str):
         return None, None
 
 
-def determine_values(raw: str):
+def determine_values(raw):
     """
-    Converts your 'Consumer Promo' raw text into:
-    - promo_type
-    - $ value
-    - % value
-    - display text (human-friendly)
-    - raw text (original)
+    Converts 'Consumer Promo' text into:
+      - promo_type
+      - $ value
+      - % value
+      - display text
+      - raw text
     """
     text = str(raw).strip()
 
@@ -68,31 +74,34 @@ def determine_values(raw: str):
     return "Unknown", 0, 0, text, text
 
 
-def file_bytes(path: Path) -> bytes:
-    return path.read_bytes()
+def read_bytes(p: Path) -> bytes:
+    return p.read_bytes()
 
 
-# ---------------------------
+# ----------------------------
 # Guard: do nothing until file is uploaded
-# ---------------------------
+# ----------------------------
 if uploaded_file is None:
     st.info("👆 Upload your supplier promo Excel file to begin.")
     st.stop()
 
-# ---------------------------
+
+# ----------------------------
 # Main pipeline
-# ---------------------------
+# ----------------------------
 try:
     with tempfile.TemporaryDirectory() as tmpdir:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = Path(tmpdir) / f"Shopify_Promo_{ts}"
         out.mkdir(parents=True, exist_ok=True)
 
-        # 1) Marketplace File (with Summary + Marketplace_Data)
-        rows, source_summary = [], []
-        xls = pd.ExcelFile(uploaded_file)
-
         expected_cols = {"BJC Code", "Consumer Promo", "Promotion Period"}
+
+        # 1) Build Marketplace file (Summary + Marketplace_Data)
+        rows = []
+        source_summary = []
+
+        xls = pd.ExcelFile(uploaded_file)
 
         for idx, sheet in enumerate(xls.sheet_names):
             df = xls.parse(sheet)
@@ -105,7 +114,6 @@ try:
             if df.empty:
                 continue
 
-            # Using first row's promo period for sheet-level dates (as per your original logic)
             start, end = parse_promo_dates(df["Promotion Period"].iloc[0])
 
             source_summary.append(
@@ -157,7 +165,7 @@ try:
 
         df_a = pd.DataFrame(rows)
 
-        # Destination summary from generated data
+        # Destination summary
         df_dest = df_a.groupby("Promo Name", as_index=False).agg(
             Dest_Count=("Bob Jane Material", "size"),
             Dest_Start=("Valid From", "first"),
@@ -166,7 +174,7 @@ try:
 
         df_summary = pd.merge(pd.DataFrame(source_summary), df_dest, on="Promo Name", how="left")
 
-        # Excel formula check (same as your original approach)
+        # Excel formula check (kept as formula so it shows in Excel)
         df_summary["Check"] = [
             f'=IF(AND(B{r+2}=E{r+2},C{r+2}=F{r+2},D{r+2}=G{r+2}),"OK","Mismatch")'
             for r in range(len(df_summary))
@@ -179,13 +187,14 @@ try:
                 writer, sheet_name="Marketplace_Data", index=False
             )
 
-        # 2) Promo & 3) Cleanup Files
-        promo_rows, cleanup_rows = [], []
+        # 2) Promo file + 3) Cleanup file
+        promo_rows = []
+        cleanup_rows = []
 
         for _, rec in df_a.iterrows():
-            display_txt = rec["_display_text"]
-            raw_txt = rec["_raw_text"]
-            promo_type = rec["Type"]
+            display_txt = str(rec["_display_text"])
+            raw_txt = str(rec["_raw_text"])
+            promo_type = str(rec["Type"])
 
             bool_443 = "TRUE" if promo_type == "443" else ""
 
@@ -195,16 +204,16 @@ try:
                 amt = m.group(1) if m else ""
                 promo_details = f"${amt}_${amt} Cash Back" if amt else ""
             elif promo_type == "Percentage":
-                promo_details = f"{raw_txt.replace(' ','')}_{display_txt}"
+                promo_details = f"{raw_txt.replace(' ', '')}_{display_txt}"
 
-            # Robust filter value detection
-            if re.search(r"\d+%\s*Off", str(display_txt), flags=re.IGNORECASE):
+            # Filter value detection
+            if re.search(r"\d+%\s*Off", display_txt, flags=re.IGNORECASE):
                 filter_val = "Percentage"
-            elif "Cash Back" in str(display_txt):
+            elif "Cash Back" in display_txt:
                 filter_val = "Cash Back"
-            elif "Buy 3 Get 1 Free" in str(display_txt):
+            elif "Buy 3 Get 1 Free" in display_txt:
                 filter_val = "Buy 3 Get 1 Free"
-            elif "Gift Card" in str(display_txt) or "Fuel Card" in str(display_txt):
+            elif "Gift Card" in display_txt or "Fuel Card" in display_txt:
                 filter_val = "Gift Card"
             else:
                 filter_val = ""
@@ -230,27 +239,32 @@ try:
         df_promo.to_excel(promo_path, index=False)
         df_cleanup.to_excel(cleanup_path, index=False)
 
+        # IMPORTANT FIX:
+        # Streamlit download_button data should be bytes (not an open file handle).
         st.success("✅ Files generated successfully. Download below:")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
             st.download_button(
                 "⬇️ Download Marketplace File",
-                data=file_bytes(marketplace_path),
+                data=read_bytes(marketplace_path),
                 file_name=marketplace_path.name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-        with col2:
+
+        with c2:
             st.download_button(
                 "⬇️ Download Promo File",
-                data=file_bytes(promo_path),
+                data=read_bytes(promo_path),
                 file_name=promo_path.name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-        with col3:
+
+        with c3:
             st.download_button(
                 "⬇️ Download Cleanup File",
-                data=file_bytes(cleanup_path),
+                data=read_bytes(cleanup_path),
                 file_name=cleanup_path.name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
